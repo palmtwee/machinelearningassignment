@@ -1,0 +1,141 @@
+---
+title: "Machine Learning"
+author: "Yen-Chu Tu"
+date: "May 27, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Training and Testing Sets
+
+The training set and testing set are loaded into the R environment, but the testing
+set it not yet examined. The libraries needed are also loaded.
+The data can be graphed against arm, belt, forearm, and dumbbell data to see if
+there're any obvious correlations.
+
+```{r}
+library(caret); library(rattle); library(ggplot2);library(gridExtra)
+training <- read.csv("./pml-training.csv")
+testing <- read.csv("./pml-testing.csv")
+p1 <- qplot(training$classe, training$roll_arm, data=training, fill=training$classe, geom=c("boxplot"))
+p2 <- qplot(training$classe, training$roll_belt, data=training, fill=training$classe, geom=c("boxplot"))
+p3 <- qplot(training$classe, training$roll_dumbbell, data=training, fill=training$classe, geom=c("boxplot"))
+p4 <- qplot(training$classe, training$roll_forearm, data=training, fill=training$classe, geom=c("boxplot"))
+grid.arrange(p1,p2,p3,p4,ncol=2, nrow=2)
+p5 <- qplot(training$classe, training$pitch_arm, data=training, fill=training$classe, geom=c("boxplot"))
+p6 <- qplot(training$classe, training$pitch_belt, data=training, fill=training$classe, geom=c("boxplot"))
+p7 <- qplot(training$classe, training$pitch_dumbbell, data=training, fill=training$classe, geom=c("boxplot"))
+p8 <- qplot(training$classe, training$pitch_forearm, data=training, fill=training$classe, geom=c("boxplot"))
+grid.arrange(p5,p6,p7,p8,ncol=2, nrow=2)
+p9 <- qplot(training$classe, training$yaw_arm, data=training, fill=training$classe, geom=c("boxplot"))
+p10 <- qplot(training$classe, training$yaw_belt, data=training, fill=training$classe, geom=c("boxplot"))
+p11 <- qplot(training$classe, training$yaw_dumbbell, data=training, fill=training$classe, geom=c("boxplot"))
+p12 <- qplot(training$classe, training$yaw_forearm, data=training, fill=training$classe, geom=c("boxplot"))
+grid.arrange(p9,p10,p11,p12,ncol=2, nrow=2)
+```
+From this data we can see that the data gathered by the arm does not help too much
+with the prediction of the classe. Therefore, the arm datas can be excluded from
+the analysis. 
+
+
+## Modeling
+The first approach that was taken was the general linear model appraoch.
+```{r, eval=FALSE}
+fit <- train(classe~., method="glm", data=training)
+```
+
+However, the classe category is not a 2-class factor, and therefore the glm model
+does not work. Therefore, Our training set will be used to generate the model by
+predicting with trees.
+
+First, the data must be edited to ensure that the incomplete datasets are excluded
+from the data analysis.
+```{r}
+columns <- match(colSums(is.na(training)),0)
+columns[is.na(columns)]<-0
+columns <- as.logical(columns)
+trainset <- training[,columns]
+testset <- testing[,columns]
+```
+
+Furthermore, from the summary of the data, we can see that the factor class data
+are extremely lopsided, with many data having a void value. therefore, factor
+class data are also excluded.
+```{r}
+finaltrainset <- trainset[, sapply(trainset, class) != "factor"]
+finaltrainset <- cbind(finaltrainset, trainset[93])
+names(finaltrainset)[57]<-"classe"
+final <- finaltrainset[,c(-1,-2,-3,-4)]
+final <- final[,c(-14:-26)]
+```
+### Preprocessing
+The data can be preprocessed to eliminate variations.
+```{r}
+ppfinal <- preProcess(final[,-40], method=c("center", "scale"))
+pptrain <- predict(ppfinal,final[,-40])
+pptrainn <- cbind(pptrain, final[,40])
+names(pptrainn)[40] <- "classe"
+pptest <- predict(ppfinal,testing[,-160])
+pptestt <- cbind(pptest, testing[,160])
+names(pptestt)[160] <- "classe"
+```
+
+### Modelling
+```{r}
+fitsett <- train(classe~., method="rpart", data=pptrainn)
+print(fitsett$finalModel)
+plot <- fancyRpartPlot(fitsett$finalModel)
+```
+
+## Cross Validation
+
+For cross validation to estimate the out of sample error, we use K-Folds.
+First, we must shuffle the data, as the training set is ordered by classe.
+```{r}
+set.seed(31415)
+trainrandom <- pptrainn[sample(nrow(pptrainn)),]
+folds <- createFolds(y=trainrandom$classe, k=5, list=TRUE, returnTrain=TRUE)
+```
+The folds can be used to subset into the train function to find samples for
+cross validation.
+
+```{r}
+train1 <- trainrandom[folds$Fold1,]
+train2 <- trainrandom[folds$Fold2,]
+train3 <- trainrandom[folds$Fold3,]
+train4 <- trainrandom[folds$Fold4,]
+train5 <- trainrandom[folds$Fold5,]
+```
+
+The data can then be predicted by our model to test for each of the 5 folds to
+estimate the out of sample error rate.
+
+```{r}
+predict1 <- predict(fitsett, newdata=train1)
+predict2 <- predict(fitsett, newdata=train2)
+predict3 <- predict(fitsett, newdata=train3)
+predict4 <- predict(fitsett, newdata=train4)
+predict5 <- predict(fitsett, newdata=train5)
+```
+
+The error rate is calculated and then averaged across the 5 folds.
+```{r}
+rate1 <- table(predict1==train1$classe)[1]/length(predict1)
+rate2 <- table(predict2==train2$classe)[1]/length(predict2)
+rate3 <- table(predict3==train3$classe)[1]/length(predict3)
+rate4 <- table(predict4==train4$classe)[1]/length(predict4)
+rate5 <- table(predict5==train5$classe)[1]/length(predict5)
+mean(c(rate1,rate2,rate3,rate4,rate5))
+```
+
+Therefore the out of sample error rate is expected to be about 50.4%
+
+## Testing
+The predictions for the test set can be found using the predict function.
+The testing set has been loaded at the beginning of the analysis.
+```{r}
+predict(fitsett, newdata=pptestt)
+```
